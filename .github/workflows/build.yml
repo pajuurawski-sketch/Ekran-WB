@@ -1,7 +1,7 @@
 
 name: Buduj Ekran W&B APK
 
-on:
+'on':
   workflow_dispatch:
 
 permissions:
@@ -24,42 +24,58 @@ jobs:
       - name: Ustaw Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Przygotuj Gradle 8.9
+      - name: Przygotuj Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Rozpakuj projekt
+      - name: Znajdz i rozpakuj projekt
+        shell: bash
         run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "Nie znaleziono archiwum ZIP"
+            echo "BLAD: Nie znaleziono archiwum ZIP"
             exit 1
           fi
 
           mkdir -p "$RUNNER_TEMP/ekranwb"
+
           unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/ekranwb"
 
-          PROJECT_DIR=$(find "$RUNNER_TEMP/ekranwb" -type f -name settings.gradle.kts -printf '%h\n' | head -n 1)
+          PROJECT_DIR=$(find "$RUNNER_TEMP/ekranwb" \
+            -type f -name settings.gradle.kts \
+            -printf '%h\n' | head -n 1)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "Nie znaleziono projektu Android"
+            echo "BLAD: Nie znaleziono projektu Android"
             exit 1
           fi
 
+          echo "Projekt znaleziony: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Zbuduj aplikację
-        run: gradle --no-daemon -p "$PROJECT_DIR" assembleDebug
-
-      - name: Przygotuj APK
+      - name: Buduj aplikacje APK
         run: |
-          mkdir -p dist
-          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" dist/Ekran-WB.apk
+          gradle --no-daemon \
+            -p "$PROJECT_DIR" \
+            assembleDebug
 
-      - name: Udostępnij APK
+      - name: Sprawdz APK
+        run: |
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "BLAD: Plik APK nie zostal utworzony"
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "$APK" dist/Ekran-WB.apk
+
+      - name: Udostepnij APK do pobrania
         uses: actions/upload-artifact@v4
         with:
           name: Ekran-WB-APK
           path: dist/Ekran-WB.apk
+          if-no-files-found: error
