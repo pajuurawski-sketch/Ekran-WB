@@ -1,8 +1,10 @@
-
 name: Buduj Ekran W&B APK
 
-'on':
+on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -19,67 +21,83 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Ustaw Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Przygotuj Gradle
+      - name: Ustaw Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: '8.9'
 
-      - name: Znajdź i rozpakuj projekt
-        shell: bash
+      - name: Znajdź ZIP projektu
+        id: zip
         run: |
-          ZIP_FILE=$(find . -maxdepth 3 -type f -iname '*.zip' \
-            -not -path './.git/*' | head -n 1)
+          ZIP_FILE=$(find . -type f -name "*.zip" \
+            -not -path "./.git/*" \
+            -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "BLAD: Nie znaleziono archiwum ZIP"
+            echo "Nie znaleziono pliku ZIP projektu Android."
             exit 1
           fi
 
           echo "Znaleziono ZIP: $ZIP_FILE"
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
-          mkdir -p "$RUNNER_TEMP/ekranwb"
-          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/ekranwb"
+      - name: Rozpakuj projekt Android
+        run: |
+          mkdir -p android_project
 
-          PROJECT_DIR=$(find "$RUNNER_TEMP/ekranwb" \
-            -type f \( -name settings.gradle.kts -o -name settings.gradle \) \
-            -printf '%h\n' | head -n 1)
+          unzip -q "${{ steps.zip.outputs.zip_file }}" \
+            -d android_project
+
+      - name: Znajdź folder projektu Gradle
+        id: project
+        run: |
+          PROJECT_DIR=$(find android_project \
+            -type f \
+            \( -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \) \
+            -print -quit)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "BLAD: Nie znaleziono settings.gradle ani settings.gradle.kts"
+            echo "Nie znaleziono settings.gradle ani settings.gradle.kts."
             echo "Zawartość ZIP:"
-            find "$RUNNER_TEMP/ekranwb" -maxdepth 4 -type f
+            find android_project -maxdepth 4 -type f
             exit 1
           fi
 
-          echo "Projekt znaleziony: $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          PROJECT_DIR=$(dirname "$PROJECT_DIR")
 
-      - name: Buduj aplikację APK
-        shell: bash
+          echo "Projekt Gradle: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Zbuduj APK
         run: |
           gradle --no-daemon \
-            -p "$PROJECT_DIR" \
+            -p "${{ steps.project.outputs.project_dir }}" \
             assembleDebug
 
-      - name: Sprawdź APK
-        shell: bash
+      - name: Sprawdź i przygotuj APK
         run: |
-          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          APK_FILE=$(find "${{ steps.project.outputs.project_dir }}" \
+            -type f \
+            -name "*.apk" \
+            -path "*/build/outputs/apk/*" \
+            -print -quit)
 
-          if [ ! -f "$APK" ]; then
-            echo "BLAD: Plik APK nie został utworzony"
-            echo "Szukam utworzonych APK:"
-            find "$PROJECT_DIR" -type f -name '*.apk'
+          if [ -z "$APK_FILE" ]; then
+            echo "BŁĄD: Nie znaleziono wygenerowanego APK."
             exit 1
           fi
 
           mkdir -p dist
-          cp "$APK" dist/Ekran-WB.apk
+          cp "$APK_FILE" dist/Ekran-WB.apk
+
+          echo "APK zostało przygotowane:"
+          ls -lh dist/Ekran-WB.apk
 
       - name: Udostępnij APK do pobrania
         uses: actions/upload-artifact@v4
@@ -87,3 +105,4 @@ jobs:
           name: Ekran-WB-APK
           path: dist/Ekran-WB.apk
           if-no-files-found: error
+          retention-days: 30
