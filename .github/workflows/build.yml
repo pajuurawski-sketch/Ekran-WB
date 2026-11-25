@@ -23,35 +23,60 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Ustaw środowisko Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-
-      - name: Ustaw Gradle
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Znajdź ZIP projektu
         id: zip
         run: |
           ZIP_FILE=$(find . -type f -name "*.zip" \
             -not -path "./.git/*" \
-            -print -quit)
+            | grep -i "projekt" \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "Nie znaleziono ZIP projektu Android."
+            ZIP_FILE=$(find . -type f -name "*.zip" \
+              -not -path "./.git/*" \
+              -print -quit)
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Nie znaleziono ZIP projektu."
             exit 1
           fi
 
-          echo "Znaleziono: $ZIP_FILE"
+          echo "Wybrany ZIP: $ZIP_FILE"
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Rozpakuj projekt
+      - name: Rozpakuj ZIP i ZIP-y znajdujące się wewnątrz
         run: |
           mkdir -p android_project
-          unzip -q "${{ steps.zip.outputs.zip_file }}" -d android_project
+
+          unzip -q "${{ steps.zip.outputs.zip_file }}" \
+            -d android_project
+
+          echo "Rozpakowuję zagnieżdżone ZIP-y..."
+
+          for ROUND in 1 2 3 4 5; do
+            FOUND=0
+
+            while IFS= read -r ZIP; do
+              [ -z "$ZIP" ] && continue
+
+              FOUND=1
+              DEST=$(dirname "$ZIP")
+
+              echo "Rozpakowuję: $ZIP"
+
+              unzip -oq "$ZIP" -d "$DEST"
+              rm -f "$ZIP"
+
+            done < <(find android_project -type f -name "*.zip")
+
+            if [ "$FOUND" -eq 0 ]; then
+              break
+            fi
+          done
+
+          echo "Zawartość projektu:"
+          find android_project -maxdepth 5 -type f
 
       - name: Znajdź projekt Gradle
         id: project
@@ -62,25 +87,53 @@ jobs:
             -print -quit)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "Nie znaleziono pliku settings.gradle."
-            find android_project -maxdepth 5 -type f
+            echo "Nie znaleziono settings.gradle."
+            echo "Lista plików:"
+            find android_project -type f
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Znaleziono projekt:"
+          echo "$PROJECT_DIR"
+
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Projekt: $PROJECT_DIR"
+
+      - name: Przygotuj Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --licenses || true
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Zbuduj APK
         run: |
-          gradle --no-daemon \
-            -p "${{ steps.project.outputs.project_dir }}" \
-            assembleDebug
+          PROJECT_DIR="${{ steps.project.outputs.project_dir }}"
+
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            chmod +x "$PROJECT_DIR/gradlew"
+            "$PROJECT_DIR/gradlew" \
+              --no-daemon \
+              -p "$PROJECT_DIR" \
+              assembleDebug
+          else
+            gradle --no-daemon \
+              -p "$PROJECT_DIR" \
+              assembleDebug
+          fi
 
       - name: Znajdź APK
         run: |
-          APK_FILE=$(find "${{ steps.project.outputs.project_dir }}" \
-            -type f -name "*.apk" \
+          PROJECT_DIR="${{ steps.project.outputs.project_dir }}"
+
+          APK_FILE=$(find "$PROJECT_DIR" -type f \
+            -name "*.apk" \
             -path "*/build/outputs/apk/*" \
             -print -quit)
 
@@ -92,6 +145,7 @@ jobs:
           mkdir -p dist
           cp "$APK_FILE" dist/Ekran-WB.apk
 
+          echo "Gotowe APK:"
           ls -lh dist/Ekran-WB.apk
 
       - name: Udostępnij APK
