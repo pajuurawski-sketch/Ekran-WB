@@ -29,51 +29,59 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Znajdz i rozpakuj projekt
+      - name: Znajdź i rozpakuj projekt
         shell: bash
         run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 3 -type f -iname '*.zip' \
+            -not -path './.git/*' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "BLAD: Nie znaleziono archiwum ZIP"
             exit 1
           fi
 
-          mkdir -p "$RUNNER_TEMP/ekranwb"
+          echo "Znaleziono ZIP: $ZIP_FILE"
 
+          mkdir -p "$RUNNER_TEMP/ekranwb"
           unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/ekranwb"
 
           PROJECT_DIR=$(find "$RUNNER_TEMP/ekranwb" \
-            -type f -name settings.gradle.kts \
+            -type f \( -name settings.gradle.kts -o -name settings.gradle \) \
             -printf '%h\n' | head -n 1)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "BLAD: Nie znaleziono projektu Android"
+            echo "BLAD: Nie znaleziono settings.gradle ani settings.gradle.kts"
+            echo "Zawartość ZIP:"
+            find "$RUNNER_TEMP/ekranwb" -maxdepth 4 -type f
             exit 1
           fi
 
           echo "Projekt znaleziony: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Buduj aplikacje APK
+      - name: Buduj aplikację APK
+        shell: bash
         run: |
           gradle --no-daemon \
             -p "$PROJECT_DIR" \
             assembleDebug
 
-      - name: Sprawdz APK
+      - name: Sprawdź APK
+        shell: bash
         run: |
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "BLAD: Plik APK nie zostal utworzony"
+            echo "BLAD: Plik APK nie został utworzony"
+            echo "Szukam utworzonych APK:"
+            find "$PROJECT_DIR" -type f -name '*.apk'
             exit 1
           fi
 
           mkdir -p dist
           cp "$APK" dist/Ekran-WB.apk
 
-      - name: Udostepnij APK do pobrania
+      - name: Udostępnij APK do pobrania
         uses: actions/upload-artifact@v4
         with:
           name: Ekran-WB-APK
